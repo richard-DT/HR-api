@@ -1,61 +1,62 @@
 import Employee from '../models/Employee.js';
+import { computeRates } from '../utils/computations.js';
 
-// @desc    Get all employees
-// @route   GET /api/employees
 export const getEmployees = async (req, res) => {
   try {
     const employees = await Employee.find({ isActive: true }).sort({ name: 1 });
-    res.json(employees);
+
+    // Attach computed rates to each employee
+    const data = employees.map(emp => ({
+      ...emp.toObject(),
+      ...computeRates(emp.monthlyRate),
+    }));
+
+    res.json(data);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// @desc    Get single employee
-// @route   GET /api/employees/:id
 export const getEmployee = async (req, res) => {
   try {
     const employee = await Employee.findById(req.params.id);
     if (!employee) return res.status(404).json({ message: 'Employee not found' });
-    res.json(employee);
+
+    res.json({
+      ...employee.toObject(),
+      ...computeRates(employee.monthlyRate),
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// @desc    Create employee
-// @route   POST /api/employees
 export const createEmployee = async (req, res) => {
   try {
-    const { name, hireDate, position, monthlyRate, dailyRate, otRate4hrs, monthlyRestdayPay, variableBonus } = req.body;
+    const { name, hireDate, position, monthlyRate, variableBonus } = req.body;
 
     const employee = await Employee.create({
       name,
       hireDate,
       position,
       monthlyRate,
-      dailyRate,
-      otRate4hrs,
-      monthlyRestdayPay: monthlyRestdayPay || 0,
       variableBonus: variableBonus || 0,
-      // Automatically log the starting salary in history
       salaryHistory: [{
         effectiveDate: hireDate,
         monthlyRate,
-        dailyRate,
-        otRate4hrs,
         isCurrent: true,
       }],
     });
 
-    res.status(201).json(employee);
+    res.status(201).json({
+      ...employee.toObject(),
+      ...computeRates(monthlyRate),
+    });
   } catch (error) {
     res.status(400).json({ message: error.message });
   }
 };
 
-// @desc    Update employee basic info
-// @route   PUT /api/employees/:id
 export const updateEmployee = async (req, res) => {
   try {
     const employee = await Employee.findByIdAndUpdate(
@@ -64,47 +65,38 @@ export const updateEmployee = async (req, res) => {
       { new: true, runValidators: true }
     );
     if (!employee) return res.status(404).json({ message: 'Employee not found' });
-    res.json(employee);
+
+    res.json({
+      ...employee.toObject(),
+      ...computeRates(employee.monthlyRate),
+    });
   } catch (error) {
     res.status(400).json({ message: error.message });
   }
 };
 
-// @desc    Update salary rate (logs to history)
-// @route   PUT /api/employees/:id/salary
 export const updateSalary = async (req, res) => {
   try {
-    const { effectiveDate, monthlyRate, dailyRate, otRate4hrs } = req.body;
+    const { effectiveDate, monthlyRate } = req.body;
 
     const employee = await Employee.findById(req.params.id);
     if (!employee) return res.status(404).json({ message: 'Employee not found' });
 
-    // Mark all previous salary history as not current
     employee.salaryHistory.forEach(h => h.isCurrent = false);
-
-    // Push new salary to history
-    employee.salaryHistory.push({
-      effectiveDate,
-      monthlyRate,
-      dailyRate,
-      otRate4hrs,
-      isCurrent: true,
-    });
-
-    // Update current rates on employee doc
+    employee.salaryHistory.push({ effectiveDate, monthlyRate, isCurrent: true });
     employee.monthlyRate = monthlyRate;
-    employee.dailyRate   = dailyRate;
-    employee.otRate4hrs  = otRate4hrs;
 
     await employee.save();
-    res.json(employee);
+
+    res.json({
+      ...employee.toObject(),
+      ...computeRates(monthlyRate),
+    });
   } catch (error) {
     res.status(400).json({ message: error.message });
   }
 };
 
-// @desc    Soft delete (deactivate) employee
-// @route   DELETE /api/employees/:id
 export const deleteEmployee = async (req, res) => {
   try {
     const employee = await Employee.findByIdAndUpdate(
