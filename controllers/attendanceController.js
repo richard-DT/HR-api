@@ -1,12 +1,19 @@
 import AttendanceWeek from '../models/AttendanceWeek.js';
 import Employee from '../models/Employee.js';
+import Loan from '../models/Loan.js';
+import {
+  computeDailyPay,
+  computeOTPay,
+  computeWeeklyTotals,
+  applyLoanDeductions,
+} from '../utils/computations.js';
 
 // @desc    Get all payslips of an employee
 // @route   GET /api/attendance/:employeeId
 export const getAttendanceByEmployee = async (req, res) => {
   try {
     const records = await AttendanceWeek.find({ employee: req.params.employeeId })
-      .sort({ periodStart: -1 }); // pinakabago muna
+      .sort({ periodStart: -1 });
     res.json(records);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -30,27 +37,46 @@ export const getAttendanceWeek = async (req, res) => {
 // @route   POST /api/attendance/:employeeId
 export const createAttendanceWeek = async (req, res) => {
   try {
-    const { periodStart, periodEnd, days } = req.body;
+    const { periodStart, periodEnd, days, otHours = 4 } = req.body;
 
     const employee = await Employee.findById(req.params.employeeId);
     if (!employee) return res.status(404).json({ message: 'Employee not found' });
 
-    // Compute totals from days array
-    const totalDailyPay = days.reduce((sum, d) => sum + (d.dailyPay || 0), 0);
-    const totalOvertime = days.reduce((sum, d) => sum + (d.overtime || 0), 0);
-    const totalAdvances = days.reduce((sum, d) => sum + (d.advances || 0), 0);
-    const netPay        = totalDailyPay + totalOvertime - totalAdvances;
+    // Auto-compute dailyPay and overtime per day
+    const computedDays = days.map(day => {
+      const dailyPay = computeDailyPay(day.attendance, employee.dailyRate);
+      const overtime = day.attendance === 'ot'
+        ? computeOTPay(employee.dailyRate, day.otHours || otHours)
+        : 0;
 
+      return { ...day, dailyPay, overtime };
+    });
+
+    // Compute weekly totals
+    const { totalDailyPay, totalOvertime, totalAdvances, netPay } =
+      computeWeeklyTotals(computedDays);
+
+    // Create the payslip
     const record = await AttendanceWeek.create({
-      employee:     req.params.employeeId,
+      employee: req.params.employeeId,
       periodStart,
       periodEnd,
-      days,
+      days: computedDays,
       totalDailyPay,
       totalOvertime,
       totalAdvances,
       netPay,
     });
+
+    // Apply FIFO loan deductions if may advances
+    if (totalAdvances > 0) {
+      const loans = await Loan.find({
+        employee:  req.params.employeeId,
+        isSettled: false,
+      }).sort({ dateTaken: 1 }); // oldest first = FIFO
+
+      await applyLoanDeductions(loans, totalAdvances);
+    }
 
     res.status(201).json(record);
   } catch (error) {
@@ -62,18 +88,30 @@ export const createAttendanceWeek = async (req, res) => {
 // @route   PUT /api/attendance/week/:weekId
 export const updateAttendanceWeek = async (req, res) => {
   try {
-    const { days } = req.body;
+    const { days, otHours = 4 } = req.body;
 
-    const record = await AttendanceWeek.findById(req.params.weekId);
+    const record = await AttendanceWeek.findById(req.params.weekId)
+      .populate('employee', 'dailyRate');
     if (!record) return res.status(404).json({ message: 'Payslip not found' });
 
-    // Recompute totals if days are updated
     if (days) {
-      record.days          = days;
-      record.totalDailyPay = days.reduce((sum, d) => sum + (d.dailyPay || 0), 0);
-      record.totalOvertime = days.reduce((sum, d) => sum + (d.overtime || 0), 0);
-      record.totalAdvances = days.reduce((sum, d) => sum + (d.advances || 0), 0);
-      record.netPay        = record.totalDailyPay + record.totalOvertime - record.totalAdvances;
+      // Recompute days
+      const computedDays = days.map(day => {
+        const dailyPay = computeDailyPay(day.attendance, record.employee.dailyRate);
+        const overtime = day.attendance === 'ot'
+          ? computeOTPay(record.employee.dailyRate, day.otHours || otHours)
+          : 0;
+        return { ...day, dailyPay, overtime };
+      });
+
+      const { totalDailyPay, totalOvertime, totalAdvances, netPay } =
+        computeWeeklyTotals(computedDays);
+
+      record.days          = computedDays;
+      record.totalDailyPay = totalDailyPay;
+      record.totalOvertime = totalOvertime;
+      record.totalAdvances = totalAdvances;
+      record.netPay        = netPay;
     }
 
     await record.save();
