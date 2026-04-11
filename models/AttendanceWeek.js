@@ -5,8 +5,9 @@ const dayEntrySchema = new mongoose.Schema({
   weekday:    { type: String },               // "Tue", "Wed", etc.
   dayNumber:  { type: Number },               // actual calendar day
   attendance: { type: String, enum: [
-    'p',      // present
+    'present',      // present
     'ot',     // overtime
+    'partial',
     'rest',   // rest day
     'sl',     // sick leave
     'vl',     // vacation leave
