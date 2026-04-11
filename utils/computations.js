@@ -1,23 +1,32 @@
-// Compute OT pay
-export const computeOTPay = (dailyRate, otHours = 4) => {
-  return (dailyRate / 8) * 1.25 * otHours;
+// Base computations from monthlyRate
+export const computeRates = (monthlyRate) => {
+  const dailyRate         = monthlyRate / 26;
+  const hourlyRate        = dailyRate / 8;
+  const monthlyRestdayPay = dailyRate * 4;
+  const grossMonthlyPay   = monthlyRate + monthlyRestdayPay;
+  const otRate4hrs        = hourlyRate * 1.25 * 4;
+
+  return { dailyRate, hourlyRate, monthlyRestdayPay, grossMonthlyPay, otRate4hrs };
 };
 
-// Compute daily pay based on attendance type
-export const computeDailyPay = (attendance, dailyRate) => {
+// Compute daily pay based on attendance
+export const computeDailyPay = (attendance, hourlyRate, hoursWorked = 8) => {
   switch (attendance) {
-    case 'p':
-    case 'ot':       // pumasok ng normal hours + OT
-      return dailyRate;
-    case 'rest':
+    case 'present': return hourlyRate * hoursWorked;
+    case 'partial': return hourlyRate * hoursWorked;
+    case 'ot':      return hourlyRate * hoursWorked;
     case 'absent':
+    case 'rest':
     case 'sl':
     case 'vl':
-    case 'holiday':
-      return 0;
-    default:
-      return 0;
+    case 'holiday': return 0;
+    default:        return 0;
   }
+};
+
+// Compute OT pay
+export const computeOTPay = (hourlyRate, otHours = 0) => {
+  return hourlyRate * 1.25 * otHours;
 };
 
 // Compute weekly totals from days array
@@ -30,7 +39,7 @@ export const computeWeeklyTotals = (days) => {
   return { totalDailyPay, totalOvertime, totalAdvances, netPay };
 };
 
-// FIFO loan deduction — deducts advances from loans oldest first
+// FIFO loan deduction
 export const applyLoanDeductions = async (loans, totalAdvances) => {
   let remaining = totalAdvances;
   const updatedLoans = [];
@@ -40,12 +49,10 @@ export const applyLoanDeductions = async (loans, totalAdvances) => {
     if (loan.isSettled) continue;
 
     if (remaining >= loan.balance) {
-      // This loan gets fully settled
       remaining      = remaining - loan.balance;
       loan.balance   = 0;
       loan.isSettled = true;
     } else {
-      // Partial payment
       loan.balance = loan.balance - remaining;
       remaining    = 0;
     }
@@ -53,7 +60,6 @@ export const applyLoanDeductions = async (loans, totalAdvances) => {
     updatedLoans.push(loan);
   }
 
-  // Save all updated loans
   for (const loan of updatedLoans) {
     await loan.save();
   }
