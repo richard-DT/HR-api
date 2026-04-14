@@ -30,7 +30,7 @@ export const getLoan = async (req, res) => {
 // @route   POST /api/loans/:employeeId
 export const createLoan = async (req, res) => {
   try {
-    const { dateTaken, principalAmount, monthlyPayment } = req.body;
+    const { dateTaken, principalAmount } = req.body;
 
     const employee = await Employee.findById(req.params.employeeId);
     if (!employee) return res.status(404).json({ message: 'Employee not found' });
@@ -39,7 +39,7 @@ export const createLoan = async (req, res) => {
       employee:        req.params.employeeId,
       dateTaken,
       principalAmount,
-      monthlyPayment,
+      // monthlyPayment,
       balance:         principalAmount, // balance starts at full amount
       payments:        [],
       isSettled:       false,
