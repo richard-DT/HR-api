@@ -10,7 +10,7 @@ const loanSchema = new mongoose.Schema({
   employee:      { type: mongoose.Schema.Types.ObjectId, ref: 'Employee', required: true },
   dateTaken:     { type: Date, required: true },
   principalAmount: { type: Number, required: true },  // original loan amount
-  monthlyPayment:  { type: Number, required: true },  // fixed monthly deduction
+  monthlyPayment:  { type: Number, required: false },  // fixed monthly deduction
   balance:         { type: Number, required: true },  // remaining balance
   payments:        [paymentSchema],                   // history of monthly payments
   isSettled:       { type: Boolean, default: false },
