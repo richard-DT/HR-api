@@ -4,6 +4,7 @@ import mongoose from 'mongoose';
 const dayEntrySchema = new mongoose.Schema({
   weekday:    { type: String },               // "Tue", "Wed", etc.
   dayNumber:  { type: Number },               // actual calendar day
+  actualDate:  { type: Date }, 
   attendance: { type: String, enum: [
     'present',      // present
     'ot',     // overtime
@@ -14,10 +15,12 @@ const dayEntrySchema = new mongoose.Schema({
     'absent', // absent
     'holiday' // holiday
   ]},
-  dailyPay:   { type: Number, default: 0 },
-  overtime:   { type: Number, default: 0 },
-  advances:   { type: Number, default: 0 },   // deductions/advances this day
-  remarks:    { type: String, default: '' },
+  hoursWorked: { type: Number, default: 8 },
+  otHours:     { type: Number, default: 0 },
+  dailyPay:    { type: Number, default: 0 },
+  overtime:    { type: Number, default: 0 },
+  advances:    { type: Number, default: 0 },
+  remarks:     { type: String, default: '' },
 }, { _id: false });
 
 const attendanceWeekSchema = new mongoose.Schema({
