@@ -233,3 +233,110 @@ export const get13thMonth = async (req, res) => {
     res.status(500).json({ message: error.message })
   }
 }
+
+// @desc    Get employee summary (KPIs)
+// @route   GET /api/employees/:id/summary
+export const getEmployeeSummary = async (req, res) => {
+  try {
+    const employee = await Employee.findById(req.params.id)
+    if (!employee) return res.status(404).json({ message: 'Employee not found' })
+
+    const { dailyRate, otRate4hrs, monthlyRestdayPay, grossMonthlyPay } =
+      computeRates(employee.monthlyRate)
+
+    // Total active loans + balance
+    const loans = await Loan.find({ employee: req.params.id })
+    const totalLoanBalance = loans
+      .filter(l => !l.isSettled)
+      .reduce((sum, l) => sum + l.balance, 0)
+    const activeLoans = loans.filter(l => !l.isSettled).length
+
+    // YTD 13th month + attendance
+    const year       = new Date().getFullYear()
+    const startOfYear = new Date(`${year}-01-01`)
+    const endOfYear   = new Date(`${year}-12-31`)
+
+    const payslips = await AttendanceWeek.find({
+      employee:    req.params.id,
+      periodStart: { $lte: endOfYear },
+      periodEnd:   { $gte: startOfYear },
+    })
+
+    const salaryHistory = employee.salaryHistory.sort(
+      (a, b) => new Date(a.effectiveDate) - new Date(b.effectiveDate)
+    )
+
+    const getRateForDate = (date) => {
+      let rate = salaryHistory[0]?.monthlyRate || employee.monthlyRate
+      for (const h of salaryHistory) {
+        if (new Date(h.effectiveDate) <= new Date(date)) rate = h.monthlyRate
+      }
+      return rate
+    }
+
+    let ytd13thMonth    = 0
+    let ytdPresent      = 0
+    let ytdWorkingDays  = 0
+
+    for (let month = 0; month < 12; month++) {
+      const monthStart = new Date(year, month, 1)
+      const monthEnd   = new Date(year, month + 1, 0)
+
+      if (monthStart > new Date()) break
+
+      const monthPayslips = payslips.filter(p => {
+        const pStart = new Date(p.periodStart)
+        const pEnd   = new Date(p.periodEnd)
+        return pStart <= monthEnd && pEnd >= monthStart
+      })
+
+      let presentDays = 0
+      let absentDays  = 0
+
+      for (const payslip of monthPayslips) {
+        for (const day of payslip.days) {
+          const dayDate = new Date(year, month, day.dayNumber)
+          if (dayDate < monthStart || dayDate > monthEnd) continue
+
+          switch (day.attendance) {
+            case 'present':
+            case 'ot':
+            case 'partial': presentDays++; break
+            case 'absent':
+            case 'sl':
+            case 'vl':      absentDays++; break
+          }
+        }
+      }
+
+      const totalWorkingDays = presentDays + absentDays
+      const monthlyRate      = getRateForDate(monthStart)
+      const share = totalWorkingDays > 0
+        ? (presentDays / totalWorkingDays) * monthlyRate / 12
+        : 0
+
+      ytd13thMonth   += share
+      ytdPresent     += presentDays
+      ytdWorkingDays += totalWorkingDays
+    }
+
+    const attendanceRate = ytdWorkingDays > 0
+      ? ((ytdPresent / ytdWorkingDays) * 100).toFixed(1)
+      : 0
+
+    res.json({
+      ...employee.toObject(),
+      dailyRate,
+      otRate4hrs,
+      monthlyRestdayPay,
+      grossMonthlyPay,
+      totalLoanBalance:  parseFloat(totalLoanBalance.toFixed(2)),
+      activeLoans,
+      ytd13thMonth:      parseFloat(ytd13thMonth.toFixed(2)),
+      attendanceRate:    parseFloat(attendanceRate),
+      year,
+    })
+  } catch (error) {
+    res.status(500).json({ message: error.message })
+  }
+}
