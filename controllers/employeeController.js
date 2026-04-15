@@ -1,6 +1,7 @@
 import Employee from '../models/Employee.js';
 import { computeRates } from '../utils/computations.js';
 import AttendanceWeek from '../models/AttendanceWeek.js';
+import Loan from '../models/Loan.js';
 
 export const getEmployees = async (req, res) => {
   try {
