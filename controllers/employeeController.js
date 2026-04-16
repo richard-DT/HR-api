@@ -118,43 +118,55 @@ export const deleteEmployee = async (req, res) => {
 export const get13thMonth = async (req, res) => {
   try {
     const { id, year } = req.params
+    const yearInt = parseInt(year)
 
     const employee = await Employee.findById(id)
     if (!employee) return res.status(404).json({ message: 'Employee not found' })
 
-    // Get all payslips for the year
-    const startOfYear = new Date(`${year}-01-01`)
-    const endOfYear   = new Date(`${year}-12-31`)
+    // Dec 1 last year → Nov 30 this year
+    const periodStart = new Date(yearInt - 1, 11, 1)  // Dec 1 last year
+    const periodEnd   = new Date(yearInt, 10, 30)      // Nov 30 this year
 
     const payslips = await AttendanceWeek.find({
       employee:    id,
-      periodStart: { $lte: endOfYear },
-      periodEnd:   { $gte: startOfYear },
+      periodStart: { $lte: periodEnd },
+      periodEnd:   { $gte: periodStart },
     }).sort({ periodStart: 1 })
 
-    // Get salary history para malaman ang rate per month
-    const salaryHistory = employee.salaryHistory.sort(
+    const salaryHistory = [...employee.salaryHistory].sort(
       (a, b) => new Date(a.effectiveDate) - new Date(b.effectiveDate)
     )
 
-    // Helper — get monthly rate during a specific date
     const getRateForDate = (date) => {
       let rate = salaryHistory[0]?.monthlyRate || employee.monthlyRate
       for (const h of salaryHistory) {
-        if (new Date(h.effectiveDate) <= new Date(date)) {
-          rate = h.monthlyRate
-        }
+        if (new Date(h.effectiveDate) <= new Date(date)) rate = h.monthlyRate
       }
       return rate
     }
 
-    // Process per month (Jan=0 to Dec=11)
-    const months = []
-    let ytdTotal = 0
+    // 12 months: Dec last year → Nov this year
+    const monthSequence = [
+      { month: 12, year: yearInt - 1 }, // December last year
+      { month: 1,  year: yearInt },     // January this year
+      { month: 2,  year: yearInt },
+      { month: 3,  year: yearInt },
+      { month: 4,  year: yearInt },
+      { month: 5,  year: yearInt },
+      { month: 6,  year: yearInt },
+      { month: 7,  year: yearInt },
+      { month: 8,  year: yearInt },
+      { month: 9,  year: yearInt },
+      { month: 10, year: yearInt },
+      { month: 11, year: yearInt },     // November this year
+    ]
 
-    for (let month = 0; month < 12; month++) {
-      const monthStart = new Date(year, month, 1)
-      const monthEnd   = new Date(year, month + 1, 0) // last day of month
+    const months = []
+    let ytdTotal  = 0
+
+    for (const { month, year: monthYear } of monthSequence) {
+      const monthStart = new Date(monthYear, month - 1, 1)
+      const monthEnd   = new Date(monthYear, month, 0) // last day of month
 
       // Skip future months
       if (monthStart > new Date()) break
@@ -166,7 +178,6 @@ export const get13thMonth = async (req, res) => {
         return pStart <= monthEnd && pEnd >= monthStart
       })
 
-      // Count days per attendance type
       let presentDays = 0
       let absentDays  = 0
       let otDays      = 0
@@ -177,26 +188,25 @@ export const get13thMonth = async (req, res) => {
 
       for (const payslip of monthPayslips) {
         for (const day of payslip.days) {
-          // Only count days that fall within this month
-          const dayDate = new Date(year, month, day.dayNumber)
-          if (dayDate < monthStart || dayDate > monthEnd) continue
+          const actualDate = new Date(payslip.periodStart)
+          actualDate.setDate(actualDate.getDate() + payslip.days.indexOf(day))
+
+          if (actualDate < monthStart || actualDate > monthEnd) continue
 
           switch (day.attendance) {
             case 'present': presentDays++; break
             case 'ot':      presentDays++; otDays++; break
             case 'partial': presentDays++; partialDays++; break
-            case 'absent':  absentDays++;  break
-            case 'sl':      absentDays++;  slDays++; break
-            case 'vl':      absentDays++;  vlDays++; break
-            case 'rest':    restDays++;    break
+            case 'absent':  absentDays++; break
+            case 'sl':      absentDays++; slDays++; break
+            case 'vl':      absentDays++; vlDays++; break
+            case 'rest':    restDays++; break
           }
         }
       }
 
       const totalWorkingDays = presentDays + absentDays
       const monthlyRate      = getRateForDate(monthStart)
-
-      // Compute 13th month share for this month
       const share = totalWorkingDays > 0
         ? (presentDays / totalWorkingDays) * monthlyRate / 12
         : 0
@@ -204,8 +214,10 @@ export const get13thMonth = async (req, res) => {
       ytdTotal += share
 
       months.push({
-        month:          month + 1,
-        monthName:      monthStart.toLocaleString('en-PH', { month: 'long' }),
+        month,
+        year:            monthYear,
+        monthName:       monthStart.toLocaleString('en-PH', { month: 'long' }),
+        fullMonthName:   `${monthStart.toLocaleString('en-PH', { month: 'long' })} ${monthYear}`,
         presentDays,
         absentDays,
         otDays,
@@ -215,17 +227,15 @@ export const get13thMonth = async (req, res) => {
         restDays,
         totalWorkingDays,
         monthlyRate,
-        share:          parseFloat(share.toFixed(2)),
-        hasData:        monthPayslips.length > 0,
+        share:           parseFloat(share.toFixed(2)),
+        hasData:         monthPayslips.length > 0,
       })
     }
 
     res.json({
-      employee: {
-        id:   employee._id,
-        name: employee.name,
-      },
-      year:     parseInt(year),
+      employee: { id: employee._id, name: employee.name },
+      year:     yearInt,
+      period:   `Dec ${yearInt - 1} — Nov ${yearInt}`,
       months,
       ytdTotal: parseFloat(ytdTotal.toFixed(2)),
     })
@@ -253,16 +263,16 @@ export const getEmployeeSummary = async (req, res) => {
     const activeLoans = loans.filter(l => !l.isSettled).length
 
     // YTD 13th month + attendance
-    const year       = new Date().getFullYear()
-    const startOfYear = new Date(`${year}-01-01`)
-    const endOfYear   = new Date(`${year}-12-31`)
+    const year        = new Date().getFullYear()
+    const periodStart = new Date(year - 1, 11, 1)  // Dec 1 last year
+    const periodEnd   = new Date(year, 10, 30)      // Nov 30 this year
 
     const payslips = await AttendanceWeek.find({
       employee:    req.params.id,
-      periodStart: { $lte: endOfYear },
-      periodEnd:   { $gte: startOfYear },
+      periodStart: { $lte: periodEnd },
+      periodEnd:   { $gte: periodStart },
     })
-
+    
     const salaryHistory = employee.salaryHistory.sort(
       (a, b) => new Date(a.effectiveDate) - new Date(b.effectiveDate)
     )
@@ -279,9 +289,25 @@ export const getEmployeeSummary = async (req, res) => {
     let ytdPresent      = 0
     let ytdWorkingDays  = 0
 
-    for (let month = 0; month < 12; month++) {
-      const monthStart = new Date(year, month, 1)
-      const monthEnd   = new Date(year, month + 1, 0)
+    // Palitan ng:
+    const monthSequence = [
+      { month: 12, year: year - 1 },
+      { month: 1,  year: year },
+      { month: 2,  year: year },
+      { month: 3,  year: year },
+      { month: 4,  year: year },
+      { month: 5,  year: year },
+      { month: 6,  year: year },
+      { month: 7,  year: year },
+      { month: 8,  year: year },
+      { month: 9,  year: year },
+      { month: 10, year: year },
+      { month: 11, year: year },
+    ]
+
+    for (const { month, year: monthYear } of monthSequence) {
+      const monthStart = new Date(monthYear, month - 1, 1)
+      const monthEnd   = new Date(monthYear, month, 0)
 
       if (monthStart > new Date()) break
 
@@ -296,8 +322,9 @@ export const getEmployeeSummary = async (req, res) => {
 
       for (const payslip of monthPayslips) {
         for (const day of payslip.days) {
-          const dayDate = new Date(year, month, day.dayNumber)
-          if (dayDate < monthStart || dayDate > monthEnd) continue
+          const actualDate = new Date(payslip.periodStart)
+          actualDate.setDate(actualDate.getDate() + payslip.days.indexOf(day))
+          if (actualDate < monthStart || actualDate > monthEnd) continue
 
           switch (day.attendance) {
             case 'present':
