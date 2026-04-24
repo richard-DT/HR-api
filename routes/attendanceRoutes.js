@@ -6,6 +6,7 @@ import {
   createAttendanceWeek,
   updateAttendanceWeek,
   deleteAttendanceWeek,
+  togglePublish,
 } from '../controllers/attendanceController.js';
 
 const router = express.Router();
@@ -18,5 +19,6 @@ router.get('/week/:weekId',      protect, getAttendanceWeek);
 router.post('/:employeeId',      protect, adminOnly, createAttendanceWeek);
 router.put('/week/:weekId',      protect, adminOnly, updateAttendanceWeek);
 router.delete('/week/:weekId',   protect, adminOnly, deleteAttendanceWeek);
+router.put('/week/:weekId/publish', protect, adminOnly, togglePublish);
 
 export default router;

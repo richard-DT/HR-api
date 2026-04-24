@@ -32,6 +32,7 @@ const attendanceWeekSchema = new mongoose.Schema({
   totalOvertime:   { type: Number, default: 0 },
   totalAdvances:   { type: Number, default: 0 },
   netPay:          { type: Number, default: 0 },    // computed: dailyPay + OT - advances
+  isPublished:     { type: Boolean, default: false }
 }, { timestamps: true });
 
 export default mongoose.model('AttendanceWeek', attendanceWeekSchema);

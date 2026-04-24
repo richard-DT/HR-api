@@ -52,9 +52,27 @@ const applyLoanDeductionPerDay = async (employeeId, amount, paymentDate) => {
 
 // @desc    Get all payslips of an employee
 // @route   GET /api/attendance/:employeeId
+// export const getAttendanceByEmployee = async (req, res) => {
+//   try {
+//     const records = await AttendanceWeek.find({ employee: req.params.employeeId })
+//       .sort({ periodStart: -1 });
+//     res.json(records);
+//   } catch (error) {
+//     res.status(500).json({ message: error.message });
+//   }
+// };
+
 export const getAttendanceByEmployee = async (req, res) => {
   try {
-    const records = await AttendanceWeek.find({ employee: req.params.employeeId })
+    const isAdmin = req.user.role === 'admin'
+
+    // Admin sees all, employee sees published only
+    const filter = {
+      employee: req.params.employeeId,
+      ...(isAdmin ? {} : { isPublished: true }),
+    }
+
+    const records = await AttendanceWeek.find(filter)
       .sort({ periodStart: -1 });
     res.json(records);
   } catch (error) {
@@ -206,3 +224,22 @@ export const deleteAttendanceWeek = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+
+// @desc    Toggle publish status of a payslip
+// @route   PUT /api/attendance/week/:weekId/publish
+export const togglePublish = async (req, res) => {
+  try {
+    const record = await AttendanceWeek.findById(req.params.weekId)
+    if (!record) return res.status(404).json({ message: 'Payslip not found' })
+
+    record.isPublished = !record.isPublished
+    await record.save()
+
+    res.json({
+      message:     `Payslip ${record.isPublished ? 'published' : 'unpublished'} successfully`,
+      isPublished: record.isPublished,
+    })
+  } catch (error) {
+    res.status(500).json({ message: error.message })
+  }
+}
