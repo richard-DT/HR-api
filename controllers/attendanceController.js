@@ -50,17 +50,6 @@ const applyLoanDeductionPerDay = async (employeeId, amount, paymentDate) => {
   }
 };
 
-// @desc    Get all payslips of an employee
-// @route   GET /api/attendance/:employeeId
-// export const getAttendanceByEmployee = async (req, res) => {
-//   try {
-//     const records = await AttendanceWeek.find({ employee: req.params.employeeId })
-//       .sort({ periodStart: -1 });
-//     res.json(records);
-//   } catch (error) {
-//     res.status(500).json({ message: error.message });
-//   }
-// };
 
 export const getAttendanceByEmployee = async (req, res) => {
   try {
@@ -175,29 +164,113 @@ export const createAttendanceWeek = async (req, res) => {
 
 // @desc    Update a weekly payslip
 // @route   PUT /api/attendance/week/:weekId
+// export const updateAttendanceWeek = async (req, res) => {
+//   try {
+//     const { days } = req.body;
+
+//     const record = await AttendanceWeek.findById(req.params.weekId)
+//       .populate('employee', 'monthlyRate');
+//     if (!record) return res.status(404).json({ message: 'Payslip not found' });
+
+//     if (days) {
+//       const { hourlyRate } = computeRates(record.employee.monthlyRate);
+
+//       const computedDays = days.map((day, index) => {
+//         const dailyPay   = computeDailyPay(day.attendance, hourlyRate, day.hoursWorked ?? 8);
+//         const overtime   = day.attendance === 'ot'
+//           ? computeOTPay(hourlyRate, day.otHours || 0)
+//           : 0;
+//         const actualDate = getActualDate(record.periodStart, index);
+
+//         return { ...day, dailyPay, overtime, actualDate };
+//       });
+
+//       const { totalDailyPay, totalOvertime, totalAdvances, netPay } =
+//         computeWeeklyTotals(computedDays);
+
+//       record.days          = computedDays;
+//       record.totalDailyPay = totalDailyPay;
+//       record.totalOvertime = totalOvertime;
+//       record.totalAdvances = totalAdvances;
+//       record.netPay        = netPay;
+//     }
+
+//     await record.save();
+//     res.json(record);
+//   } catch (error) {
+//     res.status(400).json({ message: error.message });
+//   }
+// };
+
 export const updateAttendanceWeek = async (req, res) => {
   try {
     const { days } = req.body;
-
     const record = await AttendanceWeek.findById(req.params.weekId)
       .populate('employee', 'monthlyRate');
     if (!record) return res.status(404).json({ message: 'Payslip not found' });
 
     if (days) {
       const { hourlyRate } = computeRates(record.employee.monthlyRate);
-
       const computedDays = days.map((day, index) => {
         const dailyPay   = computeDailyPay(day.attendance, hourlyRate, day.hoursWorked ?? 8);
         const overtime   = day.attendance === 'ot'
           ? computeOTPay(hourlyRate, day.otHours || 0)
           : 0;
         const actualDate = getActualDate(record.periodStart, index);
-
         return { ...day, dailyPay, overtime, actualDate };
       });
 
       const { totalDailyPay, totalOvertime, totalAdvances, netPay } =
         computeWeeklyTotals(computedDays);
+
+      // ✅ Step 1 — I-reverse ang existing loan payments sa loob ng period
+      const periodStart = new Date(record.periodStart);
+      const periodEnd   = new Date(record.periodEnd);
+
+      const loans = await Loan.find({
+        employee: record.employee._id,
+      }).sort({ dateTaken: 1 });
+
+      for (const loan of loans) {
+        const paymentsToReverse = loan.payments.filter(p => {
+          const payDate = new Date(p.month);
+          return payDate >= periodStart && payDate <= periodEnd;
+        });
+
+        if (paymentsToReverse.length > 0) {
+          const totalReversed = paymentsToReverse.reduce(
+            (sum, p) => sum + p.amountPaid, 0
+          );
+
+          // I-add back ang amount sa balance
+          loan.balance += totalReversed;
+
+          // I-remove ang reversed payments
+          loan.payments = loan.payments.filter(p => {
+            const payDate = new Date(p.month);
+            return !(payDate >= periodStart && payDate <= periodEnd);
+          });
+
+          // I-unsettle kung na-settle na
+          if (loan.isSettled && loan.balance > 0) {
+            loan.isSettled = false;
+          }
+
+          await loan.save();
+        }
+      }
+
+      // ✅ Step 2 — I-apply ang bagong FIFO deductions
+      for (let i = 0; i < computedDays.length; i++) {
+        const day = computedDays[i];
+        if (day.advances > 0 && day.remarks?.toLowerCase() === 'loan') {
+          await applyLoanDeductionPerDay(
+            record.employee._id,
+            day.advances,
+            day.actualDate
+          );
+        }
+      }
 
       record.days          = computedDays;
       record.totalDailyPay = totalDailyPay;
